@@ -8,6 +8,8 @@ import {
   CheckCircle2,
   FileJson,
   ShieldAlert,
+  Copy,
+  ClipboardPaste,
 } from 'lucide-react';
 import { Transaction } from '../types/finance';
 import {
@@ -36,6 +38,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [showPasteBox, setShowPasteBox] = useState<boolean>(false);
+  const [pastedJson, setPastedJson] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<{
     type: 'success' | 'error';
     text: string;
@@ -76,6 +80,55 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
+  // Salin JSON ke clipboard (memudahkan transfer cepat lewat WhatsApp/chat antar perangkat)
+  const handleCopyJSON = async () => {
+    try {
+      const jsonContent = JSON.stringify(transactions);
+      await navigator.clipboard.writeText(jsonContent);
+      setStatusMessage({
+        type: 'success',
+        text: `Teks JSON (${transactions.length} transaksi) disalin ke clipboard. Anda bisa langsung paste ke WhatsApp atau catatan.`,
+      });
+    } catch {
+      setStatusMessage({
+        type: 'error',
+        text: 'Gagal menyalin otomatis ke clipboard. Gunakan tombol Unduh File Backup sebagai gantinya.',
+      });
+    }
+  };
+
+  // Shared helper untuk validasi & import JSON dari file maupun paste teks
+  const processJsonImport = (rawText: string, sourceLabel: string): boolean => {
+    try {
+      const parsed: unknown = JSON.parse(rawText);
+      const validation = validateTransactionsPayload(parsed);
+
+      if (!validation.valid) {
+        setStatusMessage({
+          type: 'error',
+          text: validation.error || 'Data JSON tidak sesuai skema Monetra.',
+        });
+        return false;
+      }
+
+      onImportTransactions(validation.transactions, importMode);
+      setStatusMessage({
+        type: 'success',
+        text:
+          importMode === 'replace'
+            ? `Berhasil memuat dan menimpa data dengan ${validation.transactions.length} transaksi dari ${sourceLabel}.`
+            : `Berhasil menggabungkan ${validation.transactions.length} transaksi dari ${sourceLabel}.`,
+      });
+      return true;
+    } catch {
+      setStatusMessage({
+        type: 'error',
+        text: 'Format teks bukan merupakan JSON yang valid atau struktur datanya rusak.',
+      });
+      return false;
+    }
+  };
+
   // FR-5: Import JSON dengan validasi skema ketat
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -88,29 +141,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
         if (typeof text !== 'string') {
           throw new Error('Isi file tidak dapat dibaca.');
         }
-        const parsed: unknown = JSON.parse(text);
-        const validation = validateTransactionsPayload(parsed);
-
-        if (!validation.valid) {
-          setStatusMessage({
-            type: 'error',
-            text: validation.error || 'File JSON tidak sesuai skema Monetra.',
-          });
-          return;
-        }
-
-        onImportTransactions(validation.transactions, importMode);
-        setStatusMessage({
-          type: 'success',
-          text:
-            importMode === 'replace'
-              ? `Berhasil memuat dan menimpa data dengan ${validation.transactions.length} transaksi dari file backup.`
-              : `Berhasil menggabungkan ${validation.transactions.length} transaksi dari file backup.`,
-        });
+        processJsonImport(text, `file ${file.name}`);
       } catch {
         setStatusMessage({
           type: 'error',
-          text: 'File bukan merupakan JSON yang valid atau struktur datanya rusak.',
+          text: 'Isi file tidak dapat dibaca.',
         });
       } finally {
         if (fileInputRef.current) {
@@ -119,6 +154,22 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       }
     };
     reader.readAsText(file);
+  };
+
+  const handlePasteImport = () => {
+    const trimmed = pastedJson.trim();
+    if (!trimmed) {
+      setStatusMessage({
+        type: 'error',
+        text: 'Mohon tempelkan teks JSON backup terlebih dahulu.',
+      });
+      return;
+    }
+    const ok = processJsonImport(trimmed, 'teks JSON');
+    if (ok) {
+      setPastedJson('');
+      setShowPasteBox(false);
+    }
   };
 
   const handleConfirmResetFinal = () => {
@@ -137,6 +188,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleClose = () => {
     setResetStep(0);
     setResetConfirmText('');
+    setShowPasteBox(false);
+    setPastedJson('');
     setStatusMessage(null);
     onClose();
   };
@@ -211,16 +264,28 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={handleExportJSON}
-              className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 flex items-center justify-center gap-2 transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              <span>
-                Unduh File Backup (monetra-backup-{getCurrentYearMonth()}.json)
-              </span>
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 flex items-center justify-center gap-2 transition-colors"
+              >
+                <Download className="w-4 h-4 shrink-0" />
+                <span className="truncate">
+                  Unduh File (.json)
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCopyJSON}
+                className="sm:w-auto py-2.5 px-4 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 flex items-center justify-center gap-2 transition-colors"
+                title="Salin data sebagai teks JSON untuk dikirim cepat via WhatsApp"
+              >
+                <Copy className="w-4 h-4 shrink-0" />
+                <span>Salin Teks JSON</span>
+              </button>
+            </div>
           </div>
 
           {/* 2. Import JSON */}
@@ -261,22 +326,58 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </button>
             </div>
 
+            {/* Tanpa filter accept ketat agar file .json dari WhatsApp di HP tidak tersembunyi/abu-abu */}
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json,application/json"
               onChange={handleFileChange}
               className="hidden"
             />
 
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center gap-2 transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              <span>Pilih &amp; Unggah File Backup (.json)</span>
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center gap-2 transition-colors"
+              >
+                <Upload className="w-4 h-4 shrink-0" />
+                <span>Pilih File Backup (.json)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowPasteBox((prev) => !prev)}
+                className="sm:w-auto py-2.5 px-4 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 flex items-center justify-center gap-2 transition-colors"
+              >
+                <ClipboardPaste className="w-4 h-4 shrink-0" />
+                <span>{showPasteBox ? 'Tutup Paste' : 'Tempel Teks'}</span>
+              </button>
+            </div>
+
+            {showPasteBox && (
+              <div className="space-y-2 pt-1">
+                <textarea
+                  rows={4}
+                  value={pastedJson}
+                  onChange={(e) => setPastedJson(e.target.value)}
+                  placeholder='Tempelkan teks JSON backup di sini (contoh: [{"id":...}])'
+                  className="w-full p-3 rounded-xl bg-white border border-slate-200 text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600"
+                />
+                <button
+                  type="button"
+                  onClick={handlePasteImport}
+                  className="w-full py-2 px-4 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors"
+                >
+                  Proses &amp; Import Teks JSON
+                </button>
+              </div>
+            )}
+
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              <strong>Tips HP/WhatsApp:</strong> File yang diunduh di WhatsApp Android biasanya
+              tersimpan di folder <code className="font-mono">Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Documents</code> atau
+              gunakan fitur <strong>Salin &amp; Tempel Teks JSON</strong> agar lebih praktis.
+            </p>
           </div>
 
           {/* 3. Reset Data (Dengan Konfirmasi Ganda / Double Confirmation) */}
